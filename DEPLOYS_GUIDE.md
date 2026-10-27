@@ -222,13 +222,22 @@ Budget the mood deck, because each mood expands into several seed queries:
 | Action | YouTube searches | Quota units |
 | --- | --- | --- |
 | One search | 1 | ~101 |
-| One mood card | 5 (its seed list) | ~505 |
-| One Smart Shuffle | up to 6 (its signals) | ~606 |
-| All 12 moods, once | ~60 | ~6,000 |
+| One mood card | 3 (capped; its seed list is longer) | ~303 |
+| One Smart Shuffle | 3 | ~303 |
+| All 12 moods, once | ~36 | ~3,600 |
 
-Repeating the same mood within ten minutes is free (cached). If you plan to browse the whole deck daily, request a quota increase in Google Cloud Console, or set `YOUTUBE_API_KEY=""` for a session — search then runs on Audius and Archive only.
+**Results are cached in Postgres** (`search_cache`), not just in memory, because serverless instances are short-lived and a per-instance cache is empty on every cold start:
 
-The app now tells you when YouTube drops out: search results show `YouTube unavailable` under the track count, and mood/shuffle toasts append `— YouTube unavailable`.
+- Fresh for **24 hours** — a repeated query costs nothing, including across deploys and instances.
+- Served for up to **7 days** when YouTube fails, so a term you searched yesterday still returns YouTube results after the daily quota runs out.
+- Empty results are cached for 1 hour so a dead query isn't retried all day.
+- Expired rows are pruned opportunistically.
+
+The quota resets at **midnight Pacific Time**. Until then, uncached terms fall back to Audius and Archive, and the UI says why.
+
+If you plan to search widely every day, request a quota increase in Google Cloud Console (APIs & Services → YouTube Data API v3 → Quotas), or leave `YOUTUBE_API_KEY` empty for a session.
+
+The app tells you when YouTube drops out: search results show `YouTube unavailable` plus Google's own reason under the track count, and mood/shuffle toasts append `— YouTube unavailable`.
 
 ### Fallback sources
 

@@ -1,6 +1,7 @@
 import type { Track } from "@/lib/tracks";
 import { makeTrackId } from "@/lib/tracks";
 
+import { cacheKeyFor, readSearchCache, writeSearchCache } from "../cache-db";
 import { cached } from "../cache";
 
 /**
@@ -101,6 +102,100 @@ async function describeYouTubeError(response: Response): Promise<string> {
   }
 }
 
+/** Cached results stay fresh for a day; an exhausted quota may serve them for a week. */
+const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
+const EMPTY_TTL_MS = 60 * 60 * 1000;
+
+async function fetchYouTubeTracks(
+  apiKey: string,
+  query: string,
+  limit: number,
+  signal: AbortSignal,
+): Promise<Track[]> {
+  const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
+  searchUrl.searchParams.set("part", "snippet");
+  searchUrl.searchParams.set("type", "video");
+  searchUrl.searchParams.set("maxResults", String(Math.min(limit, 25)));
+  searchUrl.searchParams.set("q", query);
+  searchUrl.searchParams.set("videoEmbeddable", "true");
+  searchUrl.searchParams.set("safeSearch", "moderate");
+  searchUrl.searchParams.set("key", apiKey);
+
+  const searchResponse = await fetch(searchUrl, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(6000)]),
+    headers: { Accept: "application/json" },
+    next: { revalidate: 600 },
+  });
+
+  if (!searchResponse.ok) {
+    throw new Error(await describeYouTubeError(searchResponse));
+  }
+
+  const searchData = (await searchResponse.json()) as YouTubeSearchResponse;
+  if (searchData.error) {
+    throw new Error(searchData.error.message ?? "YouTube search failed");
+  }
+
+  const items = (searchData.items ?? []).filter((item) => item.id?.videoId);
+  if (items.length === 0) return [];
+
+  // One extra quota unit buys real durations for the whole batch.
+  const ids = items.map((item) => item.id!.videoId!).join(",");
+  const durations = new Map<string, number>();
+
+  try {
+    const videoUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
+    videoUrl.searchParams.set("part", "contentDetails");
+    videoUrl.searchParams.set("id", ids);
+    videoUrl.searchParams.set("key", apiKey);
+
+    const videoResponse = await fetch(videoUrl, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+      headers: { Accept: "application/json" },
+      next: { revalidate: 3600 },
+    });
+
+    if (videoResponse.ok) {
+      const videoData = (await videoResponse.json()) as YouTubeVideoResponse;
+      for (const video of videoData.items ?? []) {
+        const seconds = parseIsoDuration(video.contentDetails?.duration);
+        if (video.id && seconds) durations.set(video.id, seconds);
+      }
+    }
+  } catch {
+    // Durations are cosmetic; a failure here must not fail the search.
+  }
+
+  const tracks: Track[] = [];
+
+  for (const item of items) {
+    const videoId = item.id!.videoId!;
+    const snippet = item.snippet ?? {};
+    const thumbnail =
+      snippet.thumbnails?.maxres?.url ??
+      snippet.thumbnails?.high?.url ??
+      snippet.thumbnails?.medium?.url ??
+      `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+    tracks.push({
+      id: makeTrackId("youtube", videoId),
+      provider: "youtube",
+      providerId: videoId,
+      title: snippet.title ?? "YouTube track",
+      artist: snippet.channelTitle ?? "YouTube",
+      album: null,
+      artwork: thumbnail,
+      duration: durations.get(videoId) ?? null,
+      streamUrl: null,
+      externalUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      kind: "video",
+      isPreview: false,
+    });
+  }
+
+  return tracks;
+}
+
 export async function searchYouTube(
   query: string,
   limit: number,
@@ -110,87 +205,33 @@ export async function searchYouTube(
   if (!apiKey) return [];
 
   return cached(`youtube:${query}:${limit}`, 10 * 60 * 1000, async () => {
-    const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
-    searchUrl.searchParams.set("part", "snippet");
-    searchUrl.searchParams.set("type", "video");
-    searchUrl.searchParams.set("maxResults", String(Math.min(limit, 25)));
-    searchUrl.searchParams.set("q", query);
-    searchUrl.searchParams.set("videoEmbeddable", "true");
-    searchUrl.searchParams.set("safeSearch", "moderate");
-    searchUrl.searchParams.set("key", apiKey);
+    const key = cacheKeyFor("youtube:v1", query, limit);
 
-    const searchResponse = await fetch(searchUrl, {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(6000)]),
-      headers: { Accept: "application/json" },
-      next: { revalidate: 600 },
-    });
-
-    if (!searchResponse.ok) {
-      throw new Error(await describeYouTubeError(searchResponse));
-    }
-
-    const searchData = (await searchResponse.json()) as YouTubeSearchResponse;
-    if (searchData.error) {
-      throw new Error(searchData.error.message ?? "YouTube search failed");
-    }
-
-    const items = (searchData.items ?? []).filter((item) => item.id?.videoId);
-    if (items.length === 0) return [];
-
-    // One extra quota unit buys real durations for the whole batch.
-    const ids = items.map((item) => item.id!.videoId!).join(",");
-    const durations = new Map<string, number>();
+    // Shared cache first: a query already paid for should never be paid twice,
+    // even across serverless cold starts.
+    const persisted = await readSearchCache<Track[]>(key);
+    if (persisted && !persisted.stale) return persisted.value;
 
     try {
-      const videoUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
-      videoUrl.searchParams.set("part", "contentDetails");
-      videoUrl.searchParams.set("id", ids);
-      videoUrl.searchParams.set("key", apiKey);
-
-      const videoResponse = await fetch(videoUrl, {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
-        headers: { Accept: "application/json" },
-        next: { revalidate: 3600 },
-      });
-
-      if (videoResponse.ok) {
-        const videoData = (await videoResponse.json()) as YouTubeVideoResponse;
-        for (const video of videoData.items ?? []) {
-          const seconds = parseIsoDuration(video.contentDetails?.duration);
-          if (video.id && seconds) durations.set(video.id, seconds);
-        }
+      const tracks = await fetchYouTubeTracks(apiKey, query, limit, signal);
+      await writeSearchCache(
+        key,
+        tracks,
+        tracks.length > 0 ? FRESH_TTL_MS : EMPTY_TTL_MS,
+      );
+      return tracks;
+    } catch (error) {
+      // Quota exhausted or the key is misconfigured: fall back to the last
+      // good answer for this query rather than dropping YouTube entirely.
+      const stale = await readSearchCache<Track[]>(key, { allowStale: true });
+      if (stale) {
+        console.warn(
+          "[youtube] serving cached results after failure:",
+          error instanceof Error ? error.message : error,
+        );
+        return stale.value;
       }
-    } catch {
-      // Durations are cosmetic; a failure here must not fail the search.
+      throw error;
     }
-
-    const tracks: Track[] = [];
-
-    for (const item of items) {
-      const videoId = item.id!.videoId!;
-      const snippet = item.snippet ?? {};
-      const thumbnail =
-        snippet.thumbnails?.maxres?.url ??
-        snippet.thumbnails?.high?.url ??
-        snippet.thumbnails?.medium?.url ??
-        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-      tracks.push({
-        id: makeTrackId("youtube", videoId),
-        provider: "youtube",
-        providerId: videoId,
-        title: snippet.title ?? "YouTube track",
-        artist: snippet.channelTitle ?? "YouTube",
-        album: null,
-        artwork: thumbnail,
-        duration: durations.get(videoId) ?? null,
-        streamUrl: null,
-        externalUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        kind: "video",
-        isPreview: false,
-      });
-    }
-
-    return tracks;
   });
 }

@@ -13,6 +13,7 @@ const EXPECTED_TABLES = [
   "playlist_tracks",
   "favorite_tracks",
   "search_history",
+  "search_cache",
   "track_plays",
 ] as const;
 

@@ -134,6 +134,7 @@ lib/
 | `playlist_tracks` | Denormalised track snapshots + position | unique `(playlist_id, track_id)` |
 | `favorite_tracks` | Saved tracks | unique `(user_id, track_id)` |
 | `search_history` | Chips + taste signal | unique `(user_id, normalized)` |
+| `search_cache` | Persistent cache for quota-metered upstream queries | primary key `key` |
 | `track_plays` | Play log for recent + Smart Shuffle | index `(user_id, played_at)` |
 
 Track snapshots are intentionally denormalised: a playlist keeps playing even if an upstream catalogue changes shape or delists the item.

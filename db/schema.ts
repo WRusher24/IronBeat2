@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -208,6 +209,28 @@ export const trackPlays = pgTable(
     index("track_plays_user_idx").on(table.userId, table.playedAt),
     index("track_plays_track_idx").on(table.userId, table.trackId),
   ],
+);
+
+/**
+ * Persistent cache for paid upstream queries.
+ *
+ * YouTube's Data API charges 100 quota units per search against a 10,000/day
+ * default, and serverless instances keep no memory between cold starts — so an
+ * in-process cache alone still re-spends quota on every deploy and every new
+ * instance. This table makes a query cost once per TTL, across the whole fleet.
+ */
+export const searchCache = pgTable(
+  "search_cache",
+  {
+    /** Namespaced key, e.g. `youtube:v1:<normalised query>:<limit>`. */
+    key: text("key").primaryKey(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("search_cache_expires_idx").on(table.expiresAt)],
 );
 
 export type User = typeof users.$inferSelect;

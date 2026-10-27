@@ -49,10 +49,19 @@ const SEARCHERS: Record<TrackProvider, ProviderSearch> = {
 };
 
 /** YouTube needs an API key; the other two are keyless and always enabled. */
-function isEnabled(provider: TrackProvider): boolean {
+function isConfigured(provider: TrackProvider): boolean {
   if (provider === "youtube") return isYouTubeConfigured();
   return true;
 }
+
+/**
+ * How many seeds of a mood/shuffle expansion may hit YouTube.
+ *
+ * YouTube charges 100 units per search against a 10,000/day default, and a
+ * mood has five seeds. Capping keeps a full pass over the deck inside the daily
+ * allowance while still giving every mood a healthy share of YouTube tracks.
+ */
+const YOUTUBE_SEEDS_PER_EXPANSION = 3;
 
 /**
  * Fans out to every source in parallel, then interleaves + de-dupes.
@@ -62,7 +71,12 @@ function isEnabled(provider: TrackProvider): boolean {
  */
 export async function searchTracks(
   query: string,
-  options: { limit?: number; signal?: AbortSignal } = {},
+  options: {
+    limit?: number;
+    signal?: AbortSignal;
+    /** Skip YouTube for this call — used to budget quota across seed sets. */
+    skipYouTube?: boolean;
+  } = {},
 ): Promise<SearchResult> {
   const startedAt = Date.now();
   const limit = Math.min(Math.max(options.limit ?? 24, 1), 50);
@@ -70,7 +84,12 @@ export async function searchTracks(
 
   const perProviderLimit = Math.min(Math.max(Math.ceil(limit / 2), 10), 25);
 
-  const enabled = PRIORITY.filter(isEnabled);
+  const enabledFor = (provider: TrackProvider): boolean =>
+    provider === "youtube"
+      ? !options.skipYouTube && isConfigured(provider)
+      : true;
+
+  const enabled = PRIORITY.filter(enabledFor);
 
   const settled = await Promise.allSettled(
     enabled.map(async (provider) => {
@@ -85,7 +104,7 @@ export async function searchTracks(
   // Walk PRIORITY (not `enabled`) so the response still reports sources that
   // were skipped, and ordering stays deterministic.
   for (const provider of PRIORITY) {
-    if (!isEnabled(provider)) {
+    if (!enabledFor(provider)) {
       groups.push([]);
       sources.push({
         provider,
@@ -94,7 +113,9 @@ export async function searchTracks(
         count: 0,
         message:
           provider === "youtube"
-            ? "Set YOUTUBE_API_KEY to enable this source"
+            ? isConfigured(provider)
+              ? "Skipped to conserve YouTube quota"
+              : "Set YOUTUBE_API_KEY to enable this source"
             : "Not configured",
       });
       continue;
@@ -149,15 +170,28 @@ export async function searchTracks(
  */
 export async function searchSeeds(
   seeds: string[],
-  options: { perSeed?: number; total?: number; signal?: AbortSignal } = {},
+  options: {
+    perSeed?: number;
+    total?: number;
+    signal?: AbortSignal;
+    youtubeSeedLimit?: number;
+  } = {},
 ): Promise<SearchResult> {
   const startedAt = Date.now();
   const perSeed = Math.min(Math.max(options.perSeed ?? 12, 4), 20);
   const total = Math.min(Math.max(options.total ?? 36, 1), 60);
   const signal = options.signal ?? new AbortController().signal;
+  const youtubeSeedLimit =
+    options.youtubeSeedLimit ?? YOUTUBE_SEEDS_PER_EXPANSION;
 
   const settled = await Promise.allSettled(
-    seeds.map((seed) => searchTracks(seed, { limit: perSeed, signal })),
+    seeds.map((seed, index) =>
+      searchTracks(seed, {
+        limit: perSeed,
+        signal,
+        skipYouTube: index >= youtubeSeedLimit,
+      }),
+    ),
   );
 
   const groups: Track[][] = [];

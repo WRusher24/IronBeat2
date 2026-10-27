@@ -22,7 +22,12 @@ export interface SearchPayload {
 
 export type SearchStatus = "idle" | "loading" | "success" | "error";
 
-const DEBOUNCE_MS = 320;
+/**
+ * Longer than a typical "instant search" debounce on purpose: every keystroke
+ * pause that fires a request costs 100 YouTube quota units, so 500 ms keeps
+ * typing responsive while collapsing a whole phrase into one search.
+ */
+const DEBOUNCE_MS = 500;
 const MIN_QUERY_LENGTH = 2;
 
 /**

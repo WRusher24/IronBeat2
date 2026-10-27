@@ -125,8 +125,8 @@ async function main() {
     `database=${health.json?.database} message=${health.json?.message ?? ""}`,
   );
   check(
-    "Health confirms all seven tables exist",
-    health.json?.tables?.present === 7 && health.json?.tables?.expected === 7,
+    "Health confirms all eight tables exist",
+    health.json?.tables?.present === 8 && health.json?.tables?.expected === 8,
     `tables=${JSON.stringify(health.json?.tables)}`,
   );
 
