@@ -4,6 +4,12 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 
 **Stack:** Next.js 15 (App Router) · TypeScript · Tailwind CSS · Drizzle ORM · Neon PostgreSQL · HTML5 Audio + YouTube IFrame
 
+<p align="center">
+  <img src="./docs/screenshots/home.webp" width="230" alt="IronBeat home screen with hero search, Smart Shuffle and the 12-card mood deck" />
+  <img src="./docs/screenshots/search.webp" width="230" alt="Instant multi-source search results with the sticky mini player" />
+  <img src="./docs/screenshots/player.webp" width="230" alt="Full-screen player with scrubber, transport controls and up-next queue" />
+</p>
+
 ---
 
 ## What it does
