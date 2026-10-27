@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+.next-*/
+out/
+build/
+next-env.d.ts
+build.log
+dev.log
+
+# production
+dist/
+
+# misc
+.DS_Store
+*.pem
+Thumbs.db
+ia.json
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+
+# drizzle local artifacts
+drizzle/meta/_journal.json.bak
