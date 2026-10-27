@@ -10,7 +10,7 @@ Everything needed to run IronBeat locally, wire it to a Neon database, and ship 
 4. [Environment variables](#4-environment-variables)
 5. [Run migrations](#5-run-migrations)
 6. [Run locally](#6-run-locally)
-7. [Enable YouTube (optional)](#7-enable-youtube-optional)
+7. [Audio sources](#7-audio-sources-no-keys-required)
 8. [Deploy to Vercel](#8-deploy-to-vercel)
 9. [PWA settings](#9-pwa-settings)
 10. [GitHub integration](#10-github-integration)
@@ -89,8 +89,8 @@ DATABASE_URL="postgresql://neondb_owner:PASSWORD@ep-xxxx-pooler.eu-central-1.aws
 # Local: http://localhost:3000 · Production: https://your-app.vercel.app
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
-# Optional — adds YouTube as a fourth search source (full-length playback)
-YOUTUBE_API_KEY=""
+# Optional — label sent to the Audius API (analytics only, no key needed)
+AUDIUS_APP_NAME="IronBeat"
 
 # Optional — set to "true" to close public registration
 SIGNUPS_DISABLED="false"
@@ -100,7 +100,7 @@ SIGNUPS_DISABLED="false"
 | --- | --- | --- | --- |
 | `DATABASE_URL` | ✅ | Postgres connection string | `db/index.ts`, `drizzle.config.ts` |
 | `NEXT_PUBLIC_APP_URL` | ✅ | Absolute origin for metadata, Open Graph and Media Session artwork | `app/layout.tsx` |
-| `YOUTUBE_API_KEY` | — | Enables the YouTube search provider | `lib/audio/providers/youtube.ts` |
+| `AUDIUS_APP_NAME` | — | Label sent to the Audius API | `lib/audio/providers/audius.ts` |
 | `SIGNUPS_DISABLED` | — | Locks `/api/auth/register` while leaving login open | `app/api/auth/register/route.ts` |
 | `DATABASE_DRIVER` | — | `neon-http` or `pg` to override auto-detection | `db/index.ts` |
 | `DATABASE_POOL_MAX` | — | `pg` pool size (default 8) | `db/index.ts` |
@@ -190,17 +190,23 @@ npm run build
 
 ---
 
-## 7. Enable YouTube (optional)
+## 7. Audio sources (no keys required)
 
-Without a key IronBeat searches Deezer, Apple Music and the Internet Archive — roughly 90 % of the catalogue people look for. Adding YouTube unlocks full-length tracks and video-only releases.
+IronBeat needs no third-party credentials. Both catalogues are public and keyless:
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/) → create or select a project.
-2. **APIs & Services → Library** → enable **YouTube Data API v3**.
-3. **Credentials → Create credentials → API key**.
-4. Restrict the key: **API restrictions → YouTube Data API v3** only.
-5. Put it in `.env.local` as `YOUTUBE_API_KEY` and restart the dev server.
+| Source | Coverage | Playback |
+| --- | --- | --- |
+| **Audius** | Independent electronic, hip-hop, phonk, house | Full-length MP3 |
+| **Internet Archive** | Public-domain and Creative Commons recordings, live sets, spoken word | Full-length MP3 |
 
-Quota note: each search costs 100 units of the default 10,000/day allowance (≈100 searches/day), plus 1 unit for the duration lookup. Results are cached in-process for 10 minutes, which helps on repeat queries. The UI degrades gracefully if the quota runs out — the source simply reports an error status.
+Both return a complete file over plain HTTP, which is what makes background and lock-screen playback work identically for every track.
+
+**Why there is no YouTube or Apple Music integration.** Both were evaluated and removed:
+
+- Apple Music and Deezer only expose **30-second previews** through their public APIs.
+- YouTube's embedded player is **suspended when iOS backgrounds the page**, so those tracks die the moment the screen locks — exactly the behaviour this app exists to avoid.
+
+If you want to add a source, implement `searchX(query, limit, signal): Promise<Track[]>` in `lib/audio/providers/` and register it in `PRIORITY` inside `lib/audio/search.ts`. The only hard requirement is a direct, full-length `streamUrl`.
 
 ---
 
@@ -363,9 +369,10 @@ jobs:
 | `/api/health` → `database: "not_configured"` | `DATABASE_URL` missing from the deployment's environment | Add it, then **Redeploy** (env changes need a new build) |
 | `DATABASE_URL is not configured` | Env file missing or not loaded | Create `.env.local`; restart `npm run dev` |
 | `relation "users" does not exist` (local) | Migrations not applied | `npm run db:migrate` |
-| Search returns only Archive.org | Deezer/iTunes blocked or rate-limited | Check the source badges under the result count; retry in a minute |
+| Search returns only Archive.org | Audius unreachable or rate-limited | Check the source badges under the result count; retry in a minute |
 | "No audio found" for everything | All providers failed (offline / corporate proxy) | Check the network tab for `/api/search` |
-| Tracks stop at 0:30 | Expected — Deezer and Apple Music expose 30 s previews | Add `YOUTUBE_API_KEY` for full-length playback |
+| A track won't play | Upstream stream URL expired or the item was delisted | The engine skips to the next track automatically; re-search for a fresh copy |
+| Audio stops when the phone locks | Opened as a browser tab rather than installed, or served over HTTP | Install via Safari → Add to Home Screen; background media requires HTTPS |
 | Play button does nothing on iPhone | Autoplay blocked | The player shows a "Tap to start" overlay; tap it once |
 | Lock screen shows no artwork | `NEXT_PUBLIC_APP_URL` wrong or artwork host unreachable | Fix the URL and redeploy |
 | `too many connections` | Unpooled connection string on serverless | Use the `-pooler` host |

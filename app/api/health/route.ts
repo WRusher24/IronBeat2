@@ -21,7 +21,7 @@ interface HealthPayload {
   service: "ironbeat";
   database: "ready" | "uninitialised" | "unreachable" | "not_configured";
   tables?: { present: number; expected: number; missing: string[] };
-  sources?: { youtube: boolean };
+  sources?: { audius: boolean; archive: boolean };
   latencyMs: number;
   message?: string;
   code?: string | null;
@@ -42,7 +42,7 @@ export async function GET() {
 
   const base = {
     service: "ironbeat" as const,
-    sources: { youtube: Boolean(process.env.YOUTUBE_API_KEY) },
+    sources: { audius: true, archive: true },
   };
 
   let rows: Array<{ table_name: string }>;

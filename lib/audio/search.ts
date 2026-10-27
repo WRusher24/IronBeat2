@@ -2,9 +2,7 @@ import type { Track, TrackProvider } from "@/lib/tracks";
 import { dedupeTracks, interleave } from "@/lib/tracks";
 
 import { searchArchive } from "./providers/archive";
-import { searchDeezer } from "./providers/deezer";
-import { searchItunes } from "./providers/itunes";
-import { isYouTubeConfigured, searchYouTube } from "./providers/youtube";
+import { searchAudius } from "./providers/audius";
 
 export type SourceStatusKind = "ok" | "skipped" | "error";
 
@@ -23,15 +21,16 @@ export interface SearchResult {
 }
 
 /**
- * Preference order. YouTube first (full length) when configured, then the two
- * preview catalogues, then the open archive.
+ * Preference order.
+ *
+ * Both sources stream complete tracks over plain HTTP — no previews, no
+ * iframes — so every result in a queue behaves identically in the background
+ * and on the lock screen.
  */
-const PRIORITY: TrackProvider[] = ["youtube", "deezer", "itunes", "archive"];
+const PRIORITY: TrackProvider[] = ["audius", "archive"];
 
 const LABELS: Record<TrackProvider, string> = {
-  youtube: "YouTube",
-  deezer: "Deezer",
-  itunes: "Apple Music",
+  audius: "Audius",
   archive: "Archive.org",
 };
 
@@ -42,19 +41,12 @@ type ProviderSearch = (
 ) => Promise<Track[]>;
 
 const SEARCHERS: Record<TrackProvider, ProviderSearch> = {
-  youtube: searchYouTube,
-  deezer: searchDeezer,
-  itunes: searchItunes,
+  audius: searchAudius,
   archive: searchArchive,
 };
 
-function isEnabled(provider: TrackProvider): boolean {
-  if (provider === "youtube") return isYouTubeConfigured();
-  return true;
-}
-
 /**
- * Fans out to every enabled source in parallel, then interleaves + de-dupes.
+ * Fans out to every source in parallel, then interleaves + de-dupes.
  *
  * Individual provider failures are non-fatal: the response reports per-source
  * status so the UI can be honest about what it could reach.
@@ -67,11 +59,10 @@ export async function searchTracks(
   const limit = Math.min(Math.max(options.limit ?? 24, 1), 50);
   const signal = options.signal ?? new AbortController().signal;
 
-  const enabled = PRIORITY.filter(isEnabled);
   const perProviderLimit = Math.min(Math.max(Math.ceil(limit / 2), 10), 25);
 
   const settled = await Promise.allSettled(
-    enabled.map(async (provider) => {
+    PRIORITY.map(async (provider) => {
       const tracks = await SEARCHERS[provider](query, perProviderLimit, signal);
       return { provider, tracks };
     }),
@@ -80,32 +71,8 @@ export async function searchTracks(
   const groups: Track[][] = [];
   const sources: SourceStatus[] = [];
 
-  // Preserve priority ordering regardless of which promise resolved first.
-  for (const provider of PRIORITY) {
-    if (!isEnabled(provider)) {
-      sources.push({
-        provider,
-        label: LABELS[provider],
-        status: "skipped",
-        count: 0,
-        message: "No API key configured",
-      });
-      continue;
-    }
-
-    const index = enabled.indexOf(provider);
+  for (const [index, provider] of PRIORITY.entries()) {
     const outcome = settled[index];
-
-    if (!outcome) {
-      sources.push({
-        provider,
-        label: LABELS[provider],
-        status: "error",
-        count: 0,
-        message: "Source unavailable",
-      });
-      continue;
-    }
 
     if (outcome.status === "fulfilled") {
       groups.push(outcome.value.tracks);
@@ -185,6 +152,6 @@ export function getSourceCapabilities(): Array<{
   return PRIORITY.map((provider) => ({
     provider,
     label: LABELS[provider],
-    enabled: isEnabled(provider),
+    enabled: true,
   }));
 }

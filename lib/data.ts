@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
@@ -11,12 +11,21 @@ import {
   trackPlays,
 } from "@/db/schema";
 import type { Track, TrackPlayInput, TrackProvider } from "@/lib/tracks";
+import { TRACK_PROVIDERS } from "@/lib/tracks";
 
 /**
  * Every function in this module takes `userId` as its first argument and
  * includes it in the WHERE clause. There is no "get by id only" helper —
  * that's the invariant that keeps vaults isolated.
  */
+
+/**
+ * Sources IronBeat currently plays. Rows saved by sources that have since been
+ * removed (preview-only catalogues, iframe-backed video) stay in the database
+ * but are filtered out of every read, so a vault never surfaces a track that
+ * can no longer play in full.
+ */
+const SUPPORTED_PROVIDERS = TRACK_PROVIDERS as unknown as string[];
 
 export interface PlaylistSummary {
   id: string;
@@ -80,7 +89,13 @@ export async function listPlaylists(userId: string): Promise<PlaylistSummary[]> 
       trackCount: sql<number>`count(${playlistTracks.id})::int`,
     })
     .from(playlists)
-    .leftJoin(playlistTracks, eq(playlistTracks.playlistId, playlists.id))
+    .leftJoin(
+      playlistTracks,
+      and(
+        eq(playlistTracks.playlistId, playlists.id),
+        inArray(playlistTracks.provider, SUPPORTED_PROVIDERS),
+      ),
+    )
     .where(eq(playlists.userId, userId))
     .groupBy(playlists.id)
     .orderBy(desc(playlists.updatedAt));
@@ -113,6 +128,7 @@ export async function getPlaylist(
       and(
         eq(playlistTracks.playlistId, playlistId),
         eq(playlistTracks.userId, userId),
+        inArray(playlistTracks.provider, SUPPORTED_PROVIDERS),
       ),
     )
     .orderBy(playlistTracks.position, playlistTracks.addedAt);
@@ -281,6 +297,7 @@ export async function moveTrackInPlaylist(
       and(
         eq(playlistTracks.playlistId, playlistId),
         eq(playlistTracks.userId, userId),
+        inArray(playlistTracks.provider, SUPPORTED_PROVIDERS),
       ),
     )
     .orderBy(playlistTracks.position, playlistTracks.addedAt);
@@ -322,7 +339,12 @@ export async function listFavorites(userId: string): Promise<Track[]> {
   const rows = await db
     .select()
     .from(favoriteTracks)
-    .where(eq(favoriteTracks.userId, userId))
+    .where(
+      and(
+        eq(favoriteTracks.userId, userId),
+        inArray(favoriteTracks.provider, SUPPORTED_PROVIDERS),
+      ),
+    )
     .orderBy(desc(favoriteTracks.createdAt));
 
   return rows.map(rowToTrack);
@@ -334,7 +356,12 @@ export async function getFavoriteIds(userId: string): Promise<string[]> {
   const rows = await db
     .select({ trackId: favoriteTracks.trackId })
     .from(favoriteTracks)
-    .where(eq(favoriteTracks.userId, userId));
+    .where(
+      and(
+        eq(favoriteTracks.userId, userId),
+        inArray(favoriteTracks.provider, SUPPORTED_PROVIDERS),
+      ),
+    );
 
   return rows.map((row) => row.trackId);
 }
@@ -530,7 +557,12 @@ export async function listRecentPlays(
       lastPlayed: sql<Date>`max(${trackPlays.playedAt})`,
     })
     .from(trackPlays)
-    .where(eq(trackPlays.userId, userId))
+    .where(
+      and(
+        eq(trackPlays.userId, userId),
+        inArray(trackPlays.provider, SUPPORTED_PROVIDERS),
+      ),
+    )
     .groupBy(
       trackPlays.trackId,
       trackPlays.provider,
@@ -577,7 +609,12 @@ export async function topArtists(userId: string, limit = 4): Promise<string[]> {
       plays: sql<number>`count(*)::int`,
     })
     .from(trackPlays)
-    .where(eq(trackPlays.userId, userId))
+    .where(
+      and(
+        eq(trackPlays.userId, userId),
+        inArray(trackPlays.provider, SUPPORTED_PROVIDERS),
+      ),
+    )
     .groupBy(trackPlays.artist)
     .orderBy(sql`count(*) desc`)
     .limit(limit);
@@ -600,11 +637,21 @@ export async function getLibraryStats(userId: string): Promise<{
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(favoriteTracks)
-      .where(eq(favoriteTracks.userId, userId)),
+      .where(
+        and(
+          eq(favoriteTracks.userId, userId),
+          inArray(favoriteTracks.provider, SUPPORTED_PROVIDERS),
+        ),
+      ),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(trackPlays)
-      .where(eq(trackPlays.userId, userId)),
+      .where(
+        and(
+          eq(trackPlays.userId, userId),
+          inArray(trackPlays.provider, SUPPORTED_PROVIDERS),
+        ),
+      ),
   ]);
 
   return {

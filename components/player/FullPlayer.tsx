@@ -263,11 +263,6 @@ export function FullPlayer({
                       {track.artist}
                     </span>
                   </span>
-                  {track.isPreview ? (
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-ink-muted">
-                      30s
-                    </span>
-                  ) : null}
                 </button>
               ))
             )}

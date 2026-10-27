@@ -63,14 +63,14 @@ You will notice:
 The search bar sits at the top of the home screen — thumb height, no scrolling required.
 
 1. Tap the bar and type. Two characters is enough to start.
-2. Results appear in about a second, pulled from Apple Music, Deezer, the Internet Archive and (when configured) YouTube at the same time.
+2. Results appear in about a second, pulled from Audius and the Internet Archive at the same time.
 3. Tap any result.
 
 **What happens when you tap:** the track starts immediately **and the rest of the result list becomes your queue**. When the track ends, the next one plays on its own. You never have to touch the phone between sets.
 
-Under the result count you can see which catalogues answered — for example `Deezer · Apple Music · Archive.org`. If one is missing, the others still work.
+Under the result count you can see which catalogues answered — for example `Audius · Archive.org`. If one is missing, the other still works.
 
-**About the 0:30 badge.** Apple Music and Deezer expose thirty-second previews. Tracks from the Internet Archive and YouTube play in full. The badge tells you which is which before you tap. If you want full-length playback for everything, ask whoever runs your deployment to add a YouTube API key — see the deployment guide.
+**Every result is a complete track.** IronBeat only uses sources that hand over the whole song, so nothing stops at thirty seconds and nothing cuts out when you lock the phone.
 
 **Useful queries**
 
@@ -186,7 +186,7 @@ Tap **♡** again to remove it. Saving is instant and works offline for anything
 - Drag the scrubber to seek
 - **⤨** shuffle · **⟲** repeat (off → all → one)
 - **Up next** shows the queue; tap any row to jump to it
-- **↗** opens the original source (Apple Music, Deezer, YouTube, Archive)
+- **↗** opens the original source (Audius or the Internet Archive)
 
 **The queue survives.** Close the app, lock the phone, come back an hour later — the last track, its position and the queue are restored. It comes back paused, so nothing blasts in the locker room.
 
@@ -194,12 +194,14 @@ Tap **♡** again to remove it. Saving is instant and works offline for anything
 
 ## 10. Lock screen & AirPods controls
 
-Once installed, IronBeat registers with the system media session.
+IronBeat declares itself as a media player to iOS, so the audio keeps running when you lock the phone, switch apps, or pocket the device.
 
 - **Lock screen** — artwork, title, artist, scrubber, play/pause, skip.
 - **AirPods** — double-tap plays/pauses; double-tap-and-hold skips (per your iOS settings).
 - **Control Centre** — the same controls appear in the Now Playing widget.
 - **CarPlay / Bluetooth** — standard transport commands are forwarded to the app.
+
+Under the hood this uses three web standards together: the **Audio Session API** (`navigator.audioSession.type = "playback"`, which tells iOS this is long-form media rather than a sound effect), the **Media Session API** (metadata and transport handlers), and a DOM-attached `<audio>` element with `playsinline` so the stream isn't suspended.
 
 No setup needed. If the controls don't appear, make sure the app was installed from Safari and that a track is actually playing.
 
@@ -236,6 +238,6 @@ When you lose signal:
 
 **Build one folder per session type**, not per genre. "Push day" is easier to find mid-set than "phonk 2024".
 
-**Previews are fine for tempo.** Thirty seconds is enough to set a rhythm between sets; save the full-length tracks for your main lifts.
+**Lock the phone and keep lifting.** Every track plays in the background — the app tells iOS it is a media player, so the screen going dark doesn't stop the music.
 
 **Re-run Smart Shuffle when a session feels flat.** It re-reads your history each time, so it drifts as your taste does.

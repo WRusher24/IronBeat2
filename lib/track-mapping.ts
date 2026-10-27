@@ -54,10 +54,5 @@ export function trackToRow(track: Track): TrackRowInput {
 }
 
 export function isKnownProvider(value: string): value is TrackProvider {
-  return (
-    value === "youtube" ||
-    value === "itunes" ||
-    value === "deezer" ||
-    value === "archive"
-  );
+  return value === "audius" || value === "archive";
 }

@@ -105,7 +105,7 @@ export const playlistTracks = pgTable(
     duration: integer("duration"),
     streamUrl: text("stream_url"),
     externalUrl: text("external_url"),
-    /** "audio" (HTML5 element) or "video" (YouTube iframe adapter). */
+    /** Playback kind. Currently always "audio"; kept for forward compatibility. */
     kind: text("kind").notNull().default("audio"),
     isPreview: boolean("is_preview").notNull().default(false),
     position: integer("position").notNull().default(0),

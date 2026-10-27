@@ -5,7 +5,7 @@
  * and the client (player engine, UI). Keep it dependency-free.
  */
 
-export const TRACK_PROVIDERS = ["youtube", "itunes", "deezer", "archive"] as const;
+export const TRACK_PROVIDERS = ["audius", "archive"] as const;
 
 export type TrackProvider = (typeof TRACK_PROVIDERS)[number];
 
@@ -40,9 +40,7 @@ export interface TrackPlayInput {
 }
 
 export const PROVIDER_LABELS: Record<TrackProvider, string> = {
-  youtube: "YouTube",
-  itunes: "Apple Music",
-  deezer: "Deezer",
+  audius: "Audius",
   archive: "Archive.org",
 };
 
@@ -99,7 +97,7 @@ export function parseTrack(value: unknown): Track | null {
 /**
  * Normalises a title for cross-provider de-duplication: drops bracketed
  * qualifiers, "feat." tails and punctuation so the same recording returned by
- * Deezer and Apple collapses into one row.
+ * two catalogues collapses into one row.
  */
 export function normalizeTitle(input: string): string {
   return input

@@ -2,7 +2,7 @@
 
 A private, mobile-first workout music PWA. Instant multi-source search, curated mood decks, a persistent mini-player with lock-screen controls, and per-user playlists — built for the ninety seconds between heavy sets.
 
-**Stack:** Next.js 15 (App Router) · TypeScript · Tailwind CSS · Drizzle ORM · Neon PostgreSQL · HTML5 Audio + YouTube IFrame
+**Stack:** Next.js 15 (App Router) · TypeScript · Tailwind CSS · Drizzle ORM · Neon PostgreSQL · HTML5 Audio
 
 <p align="center">
   <img src="./docs/screenshots/home.webp" width="230" alt="IronBeat home screen with hero search, Smart Shuffle and the 12-card mood deck" />
@@ -18,8 +18,8 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 | --- | --- |
 | **Auth** | Email + password, bcrypt (cost 11), opaque session tokens hashed in Postgres. Instant access — no approval queue. |
 | **Isolation** | Every playlist, track, favourite and search row is scoped by `user_id`. No cross-tenant read path exists. |
-| **Search** | One query fans out to Deezer, Apple Music, the Internet Archive and (optionally) YouTube, then interleaves and de-duplicates the results. |
-| **Playback** | Dual backend — `<audio>` for direct streams, YouTube IFrame for full-length video tracks — behind a single state machine. |
+| **Search** | One query fans out to Audius and the Internet Archive, then interleaves and de-duplicates the results. |
+| **Playback** | A single HTML5 backend — every source streams a complete file, so playback survives backgrounding, lock screen and AirPods. |
 | **Continuity** | Selecting any result queues the whole result list, so playback keeps rolling track after track. |
 | **Chips** | Successful searches become one-tap quick-launch chips. |
 | **Moods** | 12 curated training vibes that expand into live playlists at tap time. |
@@ -41,8 +41,8 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 │         ├── MoodDeck          ──► /api/moods/[slug]    │     │
 │         ├── MiniPlayer / FullPlayer                    │     │
 │         │      └── AudioEngine (useSyncExternalStore)  │     │
-│         │            ├── HTMLAudioElement              │     │
-│         │            ├── YouTube IFrame adapter        │     │
+│         │            ├── HTMLAudioElement (in DOM)     │     │
+│         │            ├── Audio Session API (iOS)       │     │
 │         │            └── Media Session API             │     │
 │         └── FavoritesProvider / ToastProvider          │     │
 └────────────────────────────────────────────────────────┼─────┘
@@ -62,7 +62,7 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
       └───────┬────────┘               │                         │
               │                        │                         │
    ┌──────────▼──────────┐   ┌─────────▼─────────┐     ┌─────────▼────────┐
-   │ Deezer · iTunes     │   │ Neon (HTTP)  or   │     │ sessions table   │
+   │ Audius · Archive    │   │ Neon (HTTP)  or   │     │ sessions table   │
    │ Archive.org · YT    │   │ node-postgres     │     │ (sha256 tokens)  │
    └─────────────────────┘   └───────────────────┘     └──────────────────┘
 ```
@@ -70,7 +70,7 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 ### Three decisions worth knowing
 
 **1. The player is a framework-agnostic engine, not a React context.**
-`lib/audio/engine.ts` owns all transport state and both playback backends. React subscribes with `useSyncExternalStore`, so a `timeupdate` event re-renders only the components reading the clock — not the page tree. Media Session handlers, queue persistence and autoplay-unlock all live in one place instead of being scattered across effects.
+`lib/audio/engine.ts` owns all transport state and the single playback backend. React subscribes with `useSyncExternalStore`, so a `timeupdate` event re-renders only the components reading the clock — not the page tree. Audio Session declaration, Media Session handlers, queue persistence and autoplay-unlock all live in one place instead of being scattered across effects.
 
 **2. Search is a server-side fan-out with per-source status.**
 Providers are called in parallel with individual timeouts. A dead source degrades to a reported status rather than failing the request, and the UI shows exactly which catalogues answered. Results are round-robin interleaved so no single provider owns the top of the list, then de-duplicated on normalised `title + artist`.
@@ -143,12 +143,15 @@ Track snapshots are intentionally denormalised: a playlist keeps playing even if
 
 | Source | Key required | Playable audio | Notes |
 | --- | --- | --- | --- |
-| **Deezer** | No | 30 s preview MP3 | Server-side only (CORS blocked in browsers). |
-| **Apple Music / iTunes** | No | 30 s preview M4A | Highest availability; previews are honest 0:30 in the UI. |
+| **Audius** | No | Full-length MP3 | Decentralised catalogue. Stream URL points at the stable API endpoint, which redirects to a freshly signed CDN URL on each request — so saved tracks never expire. |
 | **Internet Archive** | No | Full-length MP3 | Two-step: search → item metadata → best MP3. |
-| **YouTube** | `YOUTUBE_API_KEY` | Full-length, via official IFrame | Optional. Without a key the other three still work. |
 
-Every preview is labelled `PREVIEW` in the interface so nobody wonders why a track stops at thirty seconds. All four sources are public APIs used within their published terms; YouTube playback goes through the official player rather than stream extraction.
+Both sources hand over a complete, directly playable file over plain HTTP. That is a hard requirement, not a preference:
+
+- **No preview clips.** Preview-only catalogues (Apple Music, Deezer) return 30-second fragments, which are useless between heavy sets. They were removed.
+- **No iframe players.** YouTube's embedded player is suspended the moment iOS backgrounds the app, silently killing lock-screen playback for those tracks. It was removed for the same reason.
+
+One consequence: every track in a queue behaves identically — same background behaviour, same lock-screen controls, same seeking. Both APIs are public and need no credentials.
 
 ---
 
@@ -176,7 +179,7 @@ npm run db:generate / db:migrate / db:push / db:studio
 
 `npm run db:migrate` runs `scripts/migrate.mjs`, which applies every pending migration and verifies the seven tables exist. The `vercel-build` script chains it before `next build`, so a deploy can never ship against an empty database.
 
-`GET /api/health` reports database reachability, schema completeness and whether YouTube is configured — the first thing to check after a deploy.
+`GET /api/health` reports database reachability, schema completeness and the active audio sources — the first thing to check after a deploy.
 
 `scripts/smoke-test.mjs` drives a running instance through 68 assertions: registration, duplicate/weak-password handling, session lifecycle, multi-source search, playlist CRUD + reorder, cross-tenant isolation, favourites, play logging, moods, Smart Shuffle, and every page render. It creates and deletes its own accounts.
 

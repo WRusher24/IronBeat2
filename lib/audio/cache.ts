@@ -4,7 +4,7 @@
  * Serverless instances are ephemeral, so this is a latency/rate-limit
  * optimisation rather than a source of truth. On a warm instance it makes
  * repeat searches (the common case — tapping a recent chip) instant and keeps
- * us well inside the iTunes/Deezer rate limits.
+ * us well inside the upstream APIs' rate limits.
  */
 
 interface Entry<T> {

@@ -1,19 +1,31 @@
 import type { Track } from "@/lib/tracks";
 
-import { YouTubeAdapter, YT_STATE } from "./youtube";
+import {
+  markPlaybackSession,
+  onAudioSessionStateChange,
+  releasePlaybackSession,
+} from "./audio-session";
 
 /**
  * IronBeat audio engine.
  *
- * A framework-agnostic state machine that owns two playback backends:
+ * A framework-agnostic state machine wrapping a single HTMLAudioElement.
  *
- *   • HTMLAudioElement  — direct streams (iTunes, Deezer, Archive.org)
- *   • YouTube IFrame    — full-length video-backed tracks
+ * Every source IronBeat ships returns a complete, directly playable file, so
+ * there is exactly one playback backend. That is deliberate: an iframe-backed
+ * player (YouTube) gets suspended the moment iOS backgrounds the app, which
+ * silently kills lock-screen playback for those tracks. One backend means one
+ * behaviour — audio keeps running with the screen off, on the lock screen, and
+ * through AirPods.
  *
- * React never touches either backend directly; it subscribes to this engine
- * through `useSyncExternalStore`. That separation keeps the transport logic
- * testable, avoids re-render storms during playback, and lets Media Session /
- * lock-screen controls live in exactly one place.
+ * The element is attached to the document rather than kept as a detached
+ * `new Audio()`. iOS treats detached media elements as disposable and may stop
+ * them when the page is backgrounded; a hidden, attached element is stable.
+ *
+ * React never touches the element directly; it subscribes through
+ * `useSyncExternalStore`. That keeps transport logic testable, avoids
+ * re-render storms during playback, and puts Media Session / lock-screen
+ * controls in exactly one place.
  */
 
 export type RepeatMode = "off" | "one" | "all";
@@ -112,25 +124,18 @@ export class AudioEngine {
   private trackStartListeners = new Set<TrackStartListener>();
 
   private audio: HTMLAudioElement | null = null;
-  private yt = new YouTubeAdapter();
 
   /** Playback order over `queue` indices. Identity order unless shuffled. */
   private order: number[] = [];
   private loadToken = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  private ytTicker: ReturnType<typeof setInterval> | null = null;
   private lastTimeEmit = 0;
   private pendingResumeTime = 0;
-  private loadedVideoId: string | null = null;
   private unlocked = false;
   private consecutiveFailures = 0;
   private skipTimer: ReturnType<typeof setTimeout> | null = null;
   private mediaSessionReady = false;
-
-  constructor() {
-    this.yt.onStateChange = (state) => this.handleYouTubeState(state);
-    this.yt.onError = () => this.handlePlaybackFailure("This video can't be played here.");
-  }
+  private detachAudioSession: (() => void) | null = null;
 
   // -------------------------------------------------------------------------
   // Subscription
@@ -165,10 +170,26 @@ export class AudioEngine {
   private ensureAudio(): HTMLAudioElement {
     if (this.audio) return this.audio;
 
-    const audio = new Audio();
+    const audio = document.createElement("audio");
+    audio.id = "ironbeat-audio";
     audio.preload = "metadata";
-    audio.setAttribute("playsinline", "true");
     audio.volume = this.state.volume;
+    // Lets iOS keep the session alive when the app is backgrounded and hands
+    // control to the lock screen / AirPods.
+    audio.setAttribute("playsinline", "true");
+    audio.setAttribute("webkit-playsinline", "true");
+    audio.setAttribute("x-webkit-airplay", "allow");
+    audio.setAttribute("aria-hidden", "true");
+    audio.tabIndex = -1;
+    // Off-screen rather than display:none — some mobile browsers suspend
+    // media inside a display:none subtree. Attached to the document because
+    // detached Audio objects get reclaimed when the page is backgrounded.
+    audio.style.cssText =
+      "position:fixed;left:-9999px;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+
+    if (typeof document !== "undefined" && document.body) {
+      document.body.appendChild(audio);
+    }
 
     audio.addEventListener("loadedmetadata", () => {
       const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
@@ -240,10 +261,14 @@ export class AudioEngine {
   hydrate = (): void => {
     if (this.state.hydrated || typeof window === "undefined") return;
 
-    const storedVolume = Number(window.localStorage.getItem(VOLUME_KEY));
+    // `Number(null)` is 0, so a missing key must be handled explicitly —
+    // otherwise every first-time visitor starts at zero volume and hears
+    // nothing while the UI happily reports "playing".
+    const storedVolume = window.localStorage.getItem(VOLUME_KEY);
+    const parsedVolume = storedVolume === null ? Number.NaN : Number(storedVolume);
     const volume =
-      Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1
-        ? storedVolume
+      Number.isFinite(parsedVolume) && parsedVolume >= 0 && parsedVolume <= 1
+        ? parsedVolume
         : 1;
 
     try {
@@ -292,7 +317,28 @@ export class AudioEngine {
 
     this.setupMediaSession();
     this.updateMediaSession(this.state.current);
+    this.setupAudioSession();
   };
+
+  /**
+   * Declares an iOS media session and tracks interruptions.
+   *
+   * Without `audioSession.type = "playback"`, iOS treats web audio as
+   * incidental and can stop it when the app is backgrounded.
+   */
+  private setupAudioSession(): void {
+    markPlaybackSession();
+
+    if (this.detachAudioSession) return;
+
+    this.detachAudioSession = onAudioSessionStateChange((state) => {
+      if (state === "interrupted") {
+        // A call or Siri took the session. Reflect it; don't fight it.
+        this.patch({ isPlaying: false, isLoading: false });
+        this.updatePlaybackState("paused");
+      }
+    });
+  }
 
   private schedulePersist(): void {
     if (typeof window === "undefined") return;
@@ -466,8 +512,7 @@ export class AudioEngine {
       delete this.audio.dataset.trackId;
       this.audio.load();
     }
-    this.yt.pause();
-    this.stopYouTubeTicker();
+    releasePlaybackSession();
     this.order = [];
     this.patch({
       queue: [],
@@ -544,29 +589,11 @@ export class AudioEngine {
     const track = this.state.current;
     if (!track) return;
 
-    this.patch({ error: null, isLoading: true });
+    // Re-declare the iOS session on every play: an interruption (call, Siri)
+    // resets it to the default category.
+    markPlaybackSession();
 
-    if (track.kind === "video") {
-      try {
-        // Only (re)load when the video actually changed — otherwise resuming
-        // from pause would restart the track from zero.
-        if (this.loadedVideoId !== track.providerId) {
-          await this.yt.load(track.providerId);
-          this.loadedVideoId = track.providerId;
-        }
-        await this.yt.play();
-        this.startYouTubeTicker();
-        this.patch({ isPlaying: true, needsGesture: false });
-        this.updatePlaybackState("playing");
-      } catch {
-        this.patch({
-          isPlaying: false,
-          isLoading: false,
-          needsGesture: true,
-        });
-      }
-      return;
-    }
+    this.patch({ error: null, isLoading: true });
 
     const audio = this.ensureAudio();
 
@@ -598,12 +625,7 @@ export class AudioEngine {
   };
 
   pause = (): void => {
-    if (this.state.current?.kind === "video") {
-      this.yt.pause();
-      this.stopYouTubeTicker();
-    } else {
-      this.audio?.pause();
-    }
+    this.audio?.pause();
     this.patch({ isPlaying: false });
     this.updatePlaybackState("paused");
   };
@@ -617,9 +639,7 @@ export class AudioEngine {
     const duration = this.state.duration || this.state.current?.duration || 0;
     const target = Math.max(0, duration > 0 ? Math.min(seconds, duration) : seconds);
 
-    if (this.state.current?.kind === "video") {
-      this.yt.seek(target);
-    } else if (this.audio) {
+    if (this.audio) {
       this.audio.currentTime = target;
     }
 
@@ -635,14 +655,12 @@ export class AudioEngine {
     const volume = Math.min(Math.max(value, 0), 1);
     this.patch({ volume, muted: volume === 0 ? this.state.muted : false });
     if (this.audio) this.audio.volume = volume;
-    this.yt.setVolume(volume);
   };
 
   toggleMute = (): void => {
     const muted = !this.state.muted;
     this.patch({ muted });
     if (this.audio) this.audio.muted = muted;
-    this.yt.setMuted(muted);
   };
 
   cycleRepeat = (): void => {
@@ -704,36 +722,7 @@ export class AudioEngine {
     });
 
     this.updateMediaSession(track);
-
-    if (track.kind === "video") {
-      this.audio?.pause();
-      this.stopYouTubeTicker();
-
-      if (!autoPlay) {
-        this.patch({ isPlaying: false, isLoading: false });
-        return;
-      }
-
-      try {
-        await this.yt.load(track.providerId);
-        this.loadedVideoId = track.providerId;
-        if (token !== this.loadToken) return;
-        await this.yt.play();
-        if (token !== this.loadToken) return;
-        this.startYouTubeTicker();
-        this.patch({ isPlaying: true, isLoading: false });
-        this.updatePlaybackState("playing");
-        this.notifyTrackStart(track);
-      } catch {
-        if (token !== this.loadToken) return;
-        this.patch({ isPlaying: false, isLoading: false, needsGesture: true });
-      }
-      return;
-    }
-
-    // Audio backend.
-    this.yt.pause();
-    this.stopYouTubeTicker();
+    markPlaybackSession();
 
     const audio = this.ensureAudio();
     audio.pause();
@@ -802,52 +791,6 @@ export class AudioEngine {
         this.skipTimer = null;
         this.next(true);
       }, 1400);
-    }
-  }
-
-  private handleYouTubeState(state: number): void {
-    if (state === YT_STATE.PLAYING) {
-      this.consecutiveFailures = 0;
-      const duration = this.yt.getDuration();
-      this.patch({
-        isPlaying: true,
-        isLoading: false,
-        needsGesture: false,
-        error: null,
-        duration: duration > 0 ? duration : this.state.duration,
-      });
-      this.updatePlaybackState("playing");
-    } else if (state === YT_STATE.PAUSED) {
-      this.patch({ isPlaying: false });
-      this.updatePlaybackState("paused");
-    } else if (state === YT_STATE.BUFFERING) {
-      this.patch({ isLoading: true });
-    } else if (state === YT_STATE.ENDED) {
-      this.stopYouTubeTicker();
-      this.handleEnded();
-    }
-  }
-
-  private startYouTubeTicker(): void {
-    this.stopYouTubeTicker();
-    if (typeof window === "undefined") return;
-
-    this.ytTicker = setInterval(() => {
-      if (!this.state.isPlaying) return;
-      const time = this.yt.getCurrentTime();
-      const duration = this.yt.getDuration();
-      this.patch({
-        currentTime: time,
-        duration: duration > 0 ? duration : this.state.duration,
-      });
-      this.syncPositionState();
-    }, 500);
-  }
-
-  private stopYouTubeTicker(): void {
-    if (this.ytTicker) {
-      clearInterval(this.ytTicker);
-      this.ytTicker = null;
     }
   }
 
