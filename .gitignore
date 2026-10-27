@@ -42,3 +42,6 @@ yarn-error.log*
 
 # drizzle local artifacts
 drizzle/meta/_journal.json.bak
+
+# assistant working memory (local only)
+.workbuddy-ai/

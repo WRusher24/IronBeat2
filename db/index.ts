@@ -40,14 +40,25 @@ function isNeonHttp(url: string): boolean {
   return /\.neon\.tech(\/|$|\?)/.test(url);
 }
 
-function createDatabase(): Database {
-  const url = process.env.DATABASE_URL;
+/**
+ * Hosting dashboards frequently receive a value pasted straight out of
+ * `.env.example`, quotes included. `new URL('"postgres://…"')` throws, so
+ * strip the wrapping quotes before anything else touches the string.
+ */
+function normalizeUrl(raw: string): string {
+  return raw.trim().replace(/^['"]+/, "").replace(/['"]+$/, "");
+}
 
-  if (!url) {
+function createDatabase(): Database {
+  const raw = process.env.DATABASE_URL;
+
+  if (!raw || raw.trim().length === 0) {
     throw new Error(
       "DATABASE_URL is not configured. Copy .env.example to .env.local and add your Neon connection string.",
     );
   }
+
+  const url = normalizeUrl(raw);
 
   if (isNeonHttp(url)) {
     return drizzleNeon(neon(url), { schema }) as unknown as Database;

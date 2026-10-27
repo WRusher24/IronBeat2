@@ -117,6 +117,19 @@ async function main() {
       manifest.json.icons.some((i) => i.sizes === "512x512"),
   );
 
+  const health = await request("/api/health");
+  check("Health endpoint returns 200", health.status === 200, `got ${health.status}`);
+  check(
+    "Health reports a ready database",
+    health.json?.database === "ready",
+    `database=${health.json?.database} message=${health.json?.message ?? ""}`,
+  );
+  check(
+    "Health confirms all seven tables exist",
+    health.json?.tables?.present === 7 && health.json?.tables?.expected === 7,
+    `tables=${JSON.stringify(health.json?.tables)}`,
+  );
+
   const unauthSearch = await request("/api/search?q=phonk");
   check("Search rejects anonymous callers", unauthSearch.status === 401, `got ${unauthSearch.status}`);
 

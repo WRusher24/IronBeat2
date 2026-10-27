@@ -5,6 +5,7 @@ import { getDb } from "@/db";
 import { users } from "@/db/schema";
 import { clientIp, isSameOrigin, jsonError, jsonOk, zodMessage } from "@/lib/api";
 import { createSession, verifyPassword } from "@/lib/auth";
+import { describeDbFailure } from "@/lib/db-errors";
 import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { loginSchema } from "@/lib/validation";
 
@@ -45,20 +46,41 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const db = getDb();
-  const rows = await db
-    .select({
-      id: users.id,
-      email: users.email,
-      displayName: users.displayName,
-      passwordHash: users.passwordHash,
-      createdAt: users.createdAt,
-    })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
+  let account:
+    | {
+        id: string;
+        email: string;
+        displayName: string;
+        passwordHash: string;
+        createdAt: Date;
+      }
+    | undefined;
 
-  const account = rows[0];
+  try {
+    const db = getDb();
+    const rows = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+        passwordHash: users.passwordHash,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    account = rows[0];
+  } catch (error) {
+    const dbFailure = describeDbFailure(error);
+    if (dbFailure) {
+      console.error("[login] database failure", dbFailure.code, error);
+      return jsonError(dbFailure.message, dbFailure.status, { code: dbFailure.code });
+    }
+
+    console.error("[login] failed", error);
+    return jsonError("Sign-in is temporarily unavailable. Please try again.", 500);
+  }
 
   // Always run a comparison so response timing doesn't leak account existence.
   const validPassword = account

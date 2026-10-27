@@ -111,27 +111,53 @@ SIGNUPS_DISABLED="false"
 
 ## 5. Run migrations
 
-The initial migration is committed at `drizzle/0000_init.sql`. Apply it:
+The initial migration is committed at `drizzle/0000_init.sql`.
+
+**Locally:**
 
 ```bash
 npm run db:migrate
 ```
 
-Verify the seven tables exist:
+You should see:
+
+```
+→ Migrating ep-xxxx-pooler.eu-central-1.aws.neon.tech (Neon)
+✓ Migrations applied — 7/7 tables ready
+```
+
+**On Vercel:** nothing to do. The `vercel-build` script in `package.json` runs `node scripts/migrate.mjs` before `next build`, so every deploy applies any pending migration first. Migrations are tracked in `drizzle.__drizzle_migrations` and are safe to re-run.
+
+> If you explicitly set a **Build Command** in Vercel → Settings → Build & Development Settings, that value replaces `vercel-build`. Either clear it (recommended) or set it to `npm run vercel-build`.
+
+Verify the schema:
 
 ```bash
-npm run db:studio     # opens Drizzle Studio at https://local.drizzle.studio
+curl -s https://your-app.vercel.app/api/health | jq
 ```
+
+```json
+{
+  "ok": true,
+  "database": "ready",
+  "tables": { "present": 7, "expected": 7, "missing": [] },
+  "sources": { "youtube": true },
+  "latencyMs": 41
+}
+```
+
+`/api/health` returns **503** with a `database` field of `uninitialised`, `unreachable` or `not_configured` when something is wrong — it is the fastest way to tell a missing schema apart from a bad connection string.
 
 Other commands:
 
 | Command | Use it when |
 | --- | --- |
 | `npm run db:generate` | You changed `db/schema.ts` and need a new SQL migration |
-| `npm run db:migrate` | Applying committed migrations (CI, production) |
+| `npm run db:migrate` | Applying committed migrations (local, CI, or manually) |
 | `npm run db:push` | Prototyping — syncs the schema without a migration file |
+| `npm run db:studio` | Browse the data at https://local.drizzle.studio |
 
-> `drizzle-kit` reads `.env.local` first, then `.env`. If you keep credentials only in `.env.local`, both work.
+> `scripts/migrate.mjs` reads `.env.local` first, then `.env`, and falls back to real environment variables (which is how it runs on Vercel).
 
 ---
 
@@ -185,7 +211,7 @@ Quota note: each search costs 100 units of the default 10,000/day allowance (≈
 1. Push the repository to GitHub (see [§10](#10-github-integration)).
 2. Go to [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → select `WRusher24/IronBeat2`.
 3. Framework preset is detected as **Next.js**. Leave build settings at their defaults:
-   - Build command: `next build`
+   - Build command: **leave empty** — Vercel picks up `vercel-build` (`migrate && next build`)
    - Output directory: `.next`
    - Install command: `npm install`
 4. Add environment variables (Production **and** Preview):
@@ -312,7 +338,7 @@ jobs:
 
 - [ ] `NEXT_PUBLIC_APP_URL` equals the live URL (no trailing slash)
 - [ ] `DATABASE_URL` uses the **pooled** host (`-pooler`)
-- [ ] Migrations applied to the production database
+- [ ] `/api/health` returns `200` with `database: "ready"`
 - [ ] Sign-up works and lands directly in the vault (no approval step)
 - [ ] Search returns results from at least two sources
 - [ ] Playing a result auto-advances to the next track
@@ -331,8 +357,12 @@ jobs:
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| **"Could not create your account. Please try again."** on a fresh deploy | Database has no schema — migrations never ran | `curl /api/health` → if `database: "uninitialised"`, run `npm run db:migrate` against that database and redeploy |
+| `relation "users" does not exist` in the logs | Same as above | Same as above |
+| `/api/health` → `database: "unreachable"` | Bad `DATABASE_URL`, deleted Neon project, or a paused branch | Re-copy the connection string; check the Neon console |
+| `/api/health` → `database: "not_configured"` | `DATABASE_URL` missing from the deployment's environment | Add it, then **Redeploy** (env changes need a new build) |
 | `DATABASE_URL is not configured` | Env file missing or not loaded | Create `.env.local`; restart `npm run dev` |
-| `relation "users" does not exist` | Migrations not applied | `npm run db:migrate` |
+| `relation "users" does not exist` (local) | Migrations not applied | `npm run db:migrate` |
 | Search returns only Archive.org | Deezer/iTunes blocked or rate-limited | Check the source badges under the result count; retry in a minute |
 | "No audio found" for everything | All providers failed (offline / corporate proxy) | Check the network tab for `/api/search` |
 | Tracks stop at 0:30 | Expected — Deezer and Apple Music expose 30 s previews | Add `YOUTUBE_API_KEY` for full-length playback |

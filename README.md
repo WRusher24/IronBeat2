@@ -88,6 +88,7 @@ app/
     account/                 DELETE — erase account (cascade)
     auth/{login,logout,me,register}/
     favorites/               GET list · POST toggle
+    health/                  GET deployment diagnostics
     history/plays/           GET recently played · POST log a play
     mix/smart-shuffle/       GET behavioural mix
     moods/[slug]/            GET expanded mood playlist
@@ -172,6 +173,10 @@ npm run smoke      # end-to-end HTTP test (needs a running server)
 npm run icons      # regenerate the PWA icon set
 npm run db:generate / db:migrate / db:push / db:studio
 ```
+
+`npm run db:migrate` runs `scripts/migrate.mjs`, which applies every pending migration and verifies the seven tables exist. The `vercel-build` script chains it before `next build`, so a deploy can never ship against an empty database.
+
+`GET /api/health` reports database reachability, schema completeness and whether YouTube is configured — the first thing to check after a deploy.
 
 `scripts/smoke-test.mjs` drives a running instance through 68 assertions: registration, duplicate/weak-password handling, session lifecycle, multi-source search, playlist CRUD + reorder, cross-tenant isolation, favourites, play logging, moods, Smart Shuffle, and every page render. It creates and deletes its own accounts.
 

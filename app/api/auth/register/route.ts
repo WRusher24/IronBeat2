@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { users } from "@/db/schema";
 import { clientIp, isSameOrigin, jsonError, jsonOk, pgErrorCode, PG_UNIQUE_VIOLATION, zodMessage } from "@/lib/api";
 import { createSession, hashPassword } from "@/lib/auth";
+import { describeDbFailure } from "@/lib/db-errors";
 import { rateLimit } from "@/lib/rate-limit";
 import { registerSchema } from "@/lib/validation";
 
@@ -62,6 +63,12 @@ export async function POST(request: NextRequest) {
     // Postgres unique_violation — the email is already taken.
     if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
       return jsonError("An account with this email already exists.", 409);
+    }
+
+    const dbFailure = describeDbFailure(error);
+    if (dbFailure) {
+      console.error("[register] database failure", dbFailure.code, error);
+      return jsonError(dbFailure.message, dbFailure.status, { code: dbFailure.code });
     }
 
     console.error("[register] failed", error);
