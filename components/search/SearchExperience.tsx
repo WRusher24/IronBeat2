@@ -28,6 +28,13 @@ interface SearchExperienceProps {
   showChips: boolean;
   autoFocus?: boolean;
   compact?: boolean;
+  /**
+   * How many rows to render inline. The home screen previews a dozen; the
+   * dedicated search page renders the whole set.
+   */
+  maxResults?: number;
+  /** Hide the "see all" link when we're already on the full results page. */
+  showSeeAll?: boolean;
 }
 
 export function SearchExperience({
@@ -48,6 +55,8 @@ export function SearchExperience({
   showChips,
   autoFocus,
   compact,
+  maxResults = 12,
+  showSeeAll = true,
 }: SearchExperienceProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const active = query.trim().length >= 2;
@@ -216,7 +225,7 @@ export function SearchExperience({
               </div>
 
               <div className="space-y-0.5">
-                {tracks.slice(0, 12).map((track, index) => (
+                {tracks.slice(0, maxResults).map((track, index) => (
                   <TrackRow
                     key={track.id}
                     track={track}
@@ -228,7 +237,7 @@ export function SearchExperience({
                 ))}
               </div>
 
-              {tracks.length > 12 ? (
+              {showSeeAll && tracks.length > maxResults ? (
                 <Link
                   href={`/search?q=${encodeURIComponent(query.trim())}`}
                   className="mt-3 flex items-center justify-center gap-1.5 rounded-full border border-ink/10 py-2.5 text-[12.5px] font-semibold text-ink-muted hover:border-amber/50 hover:text-ink"

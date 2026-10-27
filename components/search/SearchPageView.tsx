@@ -124,6 +124,8 @@ export function SearchPageView({
           isPlaying={player.isPlaying}
           showChips={!search.active}
           compact
+          maxResults={50}
+          showSeeAll={false}
         />
       </div>
 
