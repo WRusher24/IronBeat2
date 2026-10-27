@@ -59,6 +59,48 @@ function parseIsoDuration(value: string | undefined): number | null {
   return total > 0 ? total : null;
 }
 
+/**
+ * Turns Google's error envelope into a fixable instruction.
+ *
+ * Every YouTube failure looks like a bare 403 in the logs, but the body says
+ * exactly which of four things is wrong — and they need four different fixes.
+ */
+async function describeYouTubeError(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as {
+      error?: {
+        message?: string;
+        errors?: Array<{ reason?: string }>;
+      };
+    };
+
+    const reason = body.error?.errors?.[0]?.reason;
+
+    switch (reason) {
+      case "quotaExceeded":
+        return "YouTube daily quota exhausted";
+      case "keyInvalid":
+        return "YouTube API key is invalid";
+      case "keyExpired":
+        return "YouTube API key has expired";
+      case "ipRefererBlocked":
+      case "refererRestriction":
+        return "YouTube key is restricted by referrer — set Application restrictions to None for server use";
+      case "accessNotConfigured":
+        return "YouTube Data API v3 is not enabled for this key's project";
+      case "dailyLimitExceeded":
+        return "YouTube project daily limit exceeded";
+      default:
+        return (
+          body.error?.message?.slice(0, 140) ??
+          `YouTube search responded ${response.status}`
+        );
+    }
+  } catch {
+    return `YouTube search responded ${response.status}`;
+  }
+}
+
 export async function searchYouTube(
   query: string,
   limit: number,
@@ -84,7 +126,7 @@ export async function searchYouTube(
     });
 
     if (!searchResponse.ok) {
-      throw new Error(`YouTube search responded ${searchResponse.status}`);
+      throw new Error(await describeYouTubeError(searchResponse));
     }
 
     const searchData = (await searchResponse.json()) as YouTubeSearchResponse;

@@ -53,6 +53,22 @@ export function SearchExperience({
   const active = query.trim().length >= 2;
 
   const healthySources = sources.filter((source) => source.status === "ok");
+  const failedSources = sources.filter((source) => source.status === "error");
+  const skippedSources = sources.filter((source) => source.status === "skipped");
+
+  // "unavailable" (tried, failed) and "not configured" (no key) are different
+  // problems with different fixes — never collapse them into one word.
+  const sourceSummary = [
+    healthySources.map((source) => source.label).join(" · "),
+    failedSources.length > 0
+      ? `${failedSources.map((source) => source.label).join(", ")} unavailable`
+      : "",
+    skippedSources.length > 0
+      ? `${skippedSources.map((source) => source.label).join(", ")} not configured`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div>
@@ -175,8 +191,13 @@ export function SearchExperience({
                     ) : null}
                   </p>
                   <p className="truncate text-[10.5px] text-ink-muted">
-                    {healthySources.map((source) => source.label).join(" · ")}
+                    {sourceSummary}
                   </p>
+                  {failedSources[0]?.message ? (
+                    <p className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-[#7f2d20]/75">
+                      {failedSources[0].message}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">

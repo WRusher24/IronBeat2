@@ -64,9 +64,11 @@ export function SearchPageView({
     setMixLoading(true);
 
     try {
-      const data = await apiFetch<{ tracks: Track[]; basis: string[] }>(
-        "/api/mix/smart-shuffle",
-      );
+      const data = await apiFetch<{
+        tracks: Track[];
+        basis: string[];
+        sources?: Array<{ provider: string; status: string }>;
+      }>("/api/mix/smart-shuffle");
 
       if (data.tracks.length === 0) {
         toast("Couldn't build a mix right now", "error");
@@ -74,7 +76,15 @@ export function SearchPageView({
       }
 
       engine.setQueue(data.tracks, 0, "Smart Shuffle", { shuffle: true });
-      toast("Shuffled from your history", "success");
+
+      const youtubeDown = data.sources?.some(
+        (source) => source.provider === "youtube" && source.status === "error",
+      );
+
+      toast(
+        `Shuffled from your history${youtubeDown ? " — YouTube unavailable" : ""}`,
+        youtubeDown ? "default" : "success",
+      );
     } catch (error) {
       toast(errorMessage(error), "error");
     } finally {

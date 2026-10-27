@@ -217,6 +217,19 @@ Search results show which catalogues answered under the track count. If YouTube 
 
 **Quota.** Each search costs 100 units of the default 10,000/day allowance (≈100 searches), plus 1 unit for the duration lookup. Results are cached in-process for 10 minutes. When the quota runs out the source reports an error status and the other two keep working.
 
+Budget the mood deck, because each mood expands into several seed queries:
+
+| Action | YouTube searches | Quota units |
+| --- | --- | --- |
+| One search | 1 | ~101 |
+| One mood card | 5 (its seed list) | ~505 |
+| One Smart Shuffle | up to 6 (its signals) | ~606 |
+| All 12 moods, once | ~60 | ~6,000 |
+
+Repeating the same mood within ten minutes is free (cached). If you plan to browse the whole deck daily, request a quota increase in Google Cloud Console, or set `YOUTUBE_API_KEY=""` for a session — search then runs on Audius and Archive only.
+
+The app now tells you when YouTube drops out: search results show `YouTube unavailable` under the track count, and mood/shuffle toasts append `— YouTube unavailable`.
+
 ### Fallback sources
 
 | Source | Key | Playback | Coverage |

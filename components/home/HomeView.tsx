@@ -108,7 +108,10 @@ export function HomeView({
     setMoodLoading(mood.slug);
 
     try {
-      const data = await apiFetch<{ tracks: Track[] }>(`/api/moods/${mood.slug}`);
+      const data = await apiFetch<{
+        tracks: Track[];
+        sources?: Array<{ provider: string; status: string }>;
+      }>(`/api/moods/${mood.slug}`);
 
       if (data.tracks.length === 0) {
         toast("That vibe came back empty — try another", "error");
@@ -116,7 +119,17 @@ export function HomeView({
       }
 
       engine.setQueue(data.tracks, 0, `${mood.emoji} ${mood.title}`);
-      toast(`${mood.title} · ${data.tracks.length} tracks`, "success");
+
+      // YouTube is the priority source, so a silent fallback would look like it
+      // vanished. Say so instead.
+      const youtubeDown = data.sources?.some(
+        (source) => source.provider === "youtube" && source.status === "error",
+      );
+
+      toast(
+        `${mood.title} · ${data.tracks.length} tracks${youtubeDown ? " — YouTube unavailable" : ""}`,
+        youtubeDown ? "default" : "success",
+      );
     } catch (error) {
       toast(errorMessage(error), "error");
     } finally {
@@ -133,6 +146,7 @@ export function HomeView({
         tracks: Track[];
         basis: string[];
         coldStart: boolean;
+        sources?: Array<{ provider: string; status: string }>;
       }>("/api/mix/smart-shuffle");
 
       setMixBasis(data.basis);
@@ -143,11 +157,18 @@ export function HomeView({
       }
 
       engine.setQueue(data.tracks, 0, "Smart Shuffle", { shuffle: true });
+
+      const youtubeDown = data.sources?.some(
+        (source) => source.provider === "youtube" && source.status === "error",
+      );
+
       toast(
-        data.coldStart
-          ? "Starter mix — search a few vibes to personalise it"
-          : `Mix built from ${data.basis.length} signals`,
-        "success",
+        `${
+          data.coldStart
+            ? "Starter mix — search a few vibes to personalise it"
+            : `Mix built from ${data.basis.length} signals`
+        }${youtubeDown ? " — YouTube unavailable" : ""}`,
+        youtubeDown ? "default" : "success",
       );
     } catch (error) {
       toast(errorMessage(error), "error");
