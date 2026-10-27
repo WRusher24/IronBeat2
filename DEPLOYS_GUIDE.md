@@ -10,7 +10,7 @@ Everything needed to run IronBeat locally, wire it to a Neon database, and ship 
 4. [Environment variables](#4-environment-variables)
 5. [Run migrations](#5-run-migrations)
 6. [Run locally](#6-run-locally)
-7. [Audio sources](#7-audio-sources-no-keys-required)
+7. [Enable YouTube (priority source)](#7-enable-youtube-priority-source)
 8. [Deploy to Vercel](#8-deploy-to-vercel)
 9. [PWA settings](#9-pwa-settings)
 10. [GitHub integration](#10-github-integration)
@@ -89,6 +89,9 @@ DATABASE_URL="postgresql://neondb_owner:PASSWORD@ep-xxxx-pooler.eu-central-1.aws
 # Local: http://localhost:3000 · Production: https://your-app.vercel.app
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 
+# YouTube Data API v3 key — the priority search source
+YOUTUBE_API_KEY=""
+
 # Optional — label sent to the Audius API (analytics only, no key needed)
 AUDIUS_APP_NAME="IronBeat"
 
@@ -100,6 +103,7 @@ SIGNUPS_DISABLED="false"
 | --- | --- | --- | --- |
 | `DATABASE_URL` | ✅ | Postgres connection string | `db/index.ts`, `drizzle.config.ts` |
 | `NEXT_PUBLIC_APP_URL` | ✅ | Absolute origin for metadata, Open Graph and Media Session artwork | `app/layout.tsx` |
+| `YOUTUBE_API_KEY` | — | Enables the priority YouTube source | `lib/audio/providers/youtube.ts` |
 | `AUDIUS_APP_NAME` | — | Label sent to the Audius API | `lib/audio/providers/audius.ts` |
 | `SIGNUPS_DISABLED` | — | Locks `/api/auth/register` while leaving login open | `app/api/auth/register/route.ts` |
 | `DATABASE_DRIVER` | — | `neon-http` or `pg` to override auto-detection | `db/index.ts` |
@@ -190,23 +194,50 @@ npm run build
 
 ---
 
-## 7. Audio sources (no keys required)
+## 7. Enable YouTube (priority source)
 
-IronBeat needs no third-party credentials. Both catalogues are public and keyless:
+YouTube is the primary catalogue. Search uses **YouTube Data API v3**; playback uses the **official IFrame Player**, which is the only route YouTube's Terms of Service permit.
 
-| Source | Coverage | Playback |
-| --- | --- | --- |
-| **Audius** | Independent electronic, hip-hop, phonk, house | Full-length MP3 |
-| **Internet Archive** | Public-domain and Creative Commons recordings, live sets, spoken word | Full-length MP3 |
+### Get a key
 
-Both return a complete file over plain HTTP, which is what makes background and lock-screen playback work identically for every track.
+1. Open [Google Cloud Console](https://console.cloud.google.com/) → create or select a project.
+2. **APIs & Services → Library** → enable **YouTube Data API v3**.
+3. **Credentials → Create credentials → API key**.
+4. Restrict the key: **API restrictions → YouTube Data API v3** only.
+5. Add it as `YOUTUBE_API_KEY` in `.env.local` (and in Vercel), then restart.
 
-**Why there is no YouTube or Apple Music integration.** Both were evaluated and removed:
+Confirm it took effect:
 
-- Apple Music and Deezer only expose **30-second previews** through their public APIs.
-- YouTube's embedded player is **suspended when iOS backgrounds the page**, so those tracks die the moment the screen locks — exactly the behaviour this app exists to avoid.
+```bash
+curl -s https://your-app.vercel.app/api/health | jq '.sources'
+# { "youtube": true, "audius": true, "archive": true }
+```
 
-If you want to add a source, implement `searchX(query, limit, signal): Promise<Track[]>` in `lib/audio/providers/` and register it in `PRIORITY` inside `lib/audio/search.ts`. The only hard requirement is a direct, full-length `streamUrl`.
+Search results show which catalogues answered under the track count. If YouTube is missing there, the key is not set on that deployment (env changes need a redeploy).
+
+**Quota.** Each search costs 100 units of the default 10,000/day allowance (≈100 searches), plus 1 unit for the duration lookup. Results are cached in-process for 10 minutes. When the quota runs out the source reports an error status and the other two keep working.
+
+### Fallback sources
+
+| Source | Key | Playback | Coverage |
+| --- | --- | --- | --- |
+| **Audius** | none | Full-length MP3 | Independent electronic, hip-hop, phonk, house |
+| **Internet Archive** | none | Full-length MP3 | Public domain, Creative Commons, live sets, spoken word |
+
+These stay enabled with or without a YouTube key, so a missing key degrades the catalogue rather than breaking search.
+
+### Background playback by source
+
+| Source | Locked screen / background |
+| --- | --- |
+| Audius, Internet Archive | **Continues.** HTML5 audio + Audio Session + Media Session. |
+| YouTube | **Pauses.** iOS suspends cross-origin iframe media when the page is backgrounded. |
+
+This is a platform constraint, not a configuration gap. Audio Session and Media Session govern the page's own media; a YouTube player is a cross-origin document with its own lifecycle. The workaround people usually reach for — extracting stream URLs — violates YouTube's Terms of Service and circumvents technical protection measures, so IronBeat does not implement it.
+
+### Adding a source
+
+Implement `searchX(query, limit, signal): Promise<Track[]>` in `lib/audio/providers/` and register it in `PRIORITY` inside `lib/audio/search.ts`. Order in `PRIORITY` is priority order.
 
 ---
 
@@ -372,7 +403,7 @@ jobs:
 | Search returns only Archive.org | Audius unreachable or rate-limited | Check the source badges under the result count; retry in a minute |
 | "No audio found" for everything | All providers failed (offline / corporate proxy) | Check the network tab for `/api/search` |
 | A track won't play | Upstream stream URL expired or the item was delisted | The engine skips to the next track automatically; re-search for a fresh copy |
-| Audio stops when the phone locks | Opened as a browser tab rather than installed, or served over HTTP | Install via Safari → Add to Home Screen; background media requires HTTPS |
+| Audio stops when the phone locks | The track is from YouTube (iframe media is suspended on background), or the site is on HTTP | Lock-screen playback works for Audius/Archive tracks; install via Safari over HTTPS |
 | Play button does nothing on iPhone | Autoplay blocked | The player shows a "Tap to start" overlay; tap it once |
 | Lock screen shows no artwork | `NEXT_PUBLIC_APP_URL` wrong or artwork host unreachable | Fix the URL and redeploy |
 | `too many connections` | Unpooled connection string on serverless | Use the `-pooler` host |

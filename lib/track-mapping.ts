@@ -1,4 +1,4 @@
-import { makeTrackId, type Track, type TrackProvider } from "@/lib/tracks";
+import { makeTrackId, type Track } from "@/lib/tracks";
 import type { TrackPayload } from "@/lib/validation";
 
 /** Shape accepted by `addTrackToPlaylist` / `toggleFavorite`. */
@@ -51,8 +51,4 @@ export function trackToRow(track: Track): TrackRowInput {
     kind: track.kind,
     isPreview: track.isPreview,
   };
-}
-
-export function isKnownProvider(value: string): value is TrackProvider {
-  return value === "audius" || value === "archive";
 }

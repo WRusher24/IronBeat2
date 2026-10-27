@@ -18,8 +18,8 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 | --- | --- |
 | **Auth** | Email + password, bcrypt (cost 11), opaque session tokens hashed in Postgres. Instant access — no approval queue. |
 | **Isolation** | Every playlist, track, favourite and search row is scoped by `user_id`. No cross-tenant read path exists. |
-| **Search** | One query fans out to Audius and the Internet Archive, then interleaves and de-duplicates the results. |
-| **Playback** | A single HTML5 backend — every source streams a complete file, so playback survives backgrounding, lock screen and AirPods. |
+| **Search** | One query fans out to YouTube, Audius and the Internet Archive, then interleaves and de-duplicates the results — YouTube first. |
+| **Playback** | Two backends — HTML5 for Audius/Archive, YouTube's official IFrame player for YouTube — behind one state machine. |
 | **Continuity** | Selecting any result queues the whole result list, so playback keeps rolling track after track. |
 | **Chips** | Successful searches become one-tap quick-launch chips. |
 | **Moods** | 12 curated training vibes that expand into live playlists at tap time. |
@@ -42,6 +42,7 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 │         ├── MiniPlayer / FullPlayer                    │     │
 │         │      └── AudioEngine (useSyncExternalStore)  │     │
 │         │            ├── HTMLAudioElement (in DOM)     │     │
+│         │            ├── YouTube IFrame adapter        │     │
 │         │            ├── Audio Session API (iOS)       │     │
 │         │            └── Media Session API             │     │
 │         └── FavoritesProvider / ToastProvider          │     │
@@ -62,7 +63,7 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
       └───────┬────────┘               │                         │
               │                        │                         │
    ┌──────────▼──────────┐   ┌─────────▼─────────┐     ┌─────────▼────────┐
-   │ Audius · Archive    │   │ Neon (HTTP)  or   │     │ sessions table   │
+   │ YouTube · Audius    │   │ Neon (HTTP)  or   │     │ sessions table   │
    │ Archive.org · YT    │   │ node-postgres     │     │ (sha256 tokens)  │
    └─────────────────────┘   └───────────────────┘     └──────────────────┘
 ```
@@ -70,7 +71,7 @@ A private, mobile-first workout music PWA. Instant multi-source search, curated 
 ### Three decisions worth knowing
 
 **1. The player is a framework-agnostic engine, not a React context.**
-`lib/audio/engine.ts` owns all transport state and the single playback backend. React subscribes with `useSyncExternalStore`, so a `timeupdate` event re-renders only the components reading the clock — not the page tree. Audio Session declaration, Media Session handlers, queue persistence and autoplay-unlock all live in one place instead of being scattered across effects.
+`lib/audio/engine.ts` owns all transport state and both playback backends. React subscribes with `useSyncExternalStore`, so a `timeupdate` event re-renders only the components reading the clock — not the page tree. Audio Session declaration, Media Session handlers, queue persistence and autoplay-unlock all live in one place instead of being scattered across effects.
 
 **2. Search is a server-side fan-out with per-source status.**
 Providers are called in parallel with individual timeouts. A dead source degrades to a reported status rather than failing the request, and the UI shows exactly which catalogues answered. Results are round-robin interleaved so no single provider owns the top of the list, then de-duplicated on normalised `title + artist`.
@@ -143,15 +144,20 @@ Track snapshots are intentionally denormalised: a playlist keeps playing even if
 
 | Source | Key required | Playable audio | Notes |
 | --- | --- | --- | --- |
+| **YouTube** | `YOUTUBE_API_KEY` | Full-length, official IFrame Player | **Priority source.** Data API v3 for search, official player for playback — the only route YouTube's terms permit. |
 | **Audius** | No | Full-length MP3 | Decentralised catalogue. Stream URL points at the stable API endpoint, which redirects to a freshly signed CDN URL on each request — so saved tracks never expire. |
 | **Internet Archive** | No | Full-length MP3 | Two-step: search → item metadata → best MP3. |
 
-Both sources hand over a complete, directly playable file over plain HTTP. That is a hard requirement, not a preference:
+YouTube is searched first: its results lead the list, and de-duplication keeps the YouTube copy when a track exists on several sources.
 
-- **No preview clips.** Preview-only catalogues (Apple Music, Deezer) return 30-second fragments, which are useless between heavy sets. They were removed.
-- **No iframe players.** YouTube's embedded player is suspended the moment iOS backgrounds the app, silently killing lock-screen playback for those tracks. It was removed for the same reason.
+**Playback behaviour differs by source, and that difference is imposed by the platform:**
 
-One consequence: every track in a queue behaves identically — same background behaviour, same lock-screen controls, same seeking. Both APIs are public and need no credentials.
+- **HTML5 tracks** (Audius, Internet Archive) keep playing through a lock, on the lock screen, and through AirPods.
+- **YouTube tracks** play full-length in the official player while the app is in the foreground. iOS suspends cross-origin iframe media when the page is backgrounded, and no web API can override that — Audio Session and Media Session apply to the page's own media, not to an iframe owned by another origin.
+
+Extracting YouTube audio streams (signature deciphering, `googlevideo` URLs, Invidious-style proxies) would technically close that gap, but it breaches YouTube's Terms of Service and circumvents technical protection measures. IronBeat does not do it.
+
+No preview clips anywhere: Apple Music and Deezer were removed because their public APIs only return 30-second fragments.
 
 ---
 

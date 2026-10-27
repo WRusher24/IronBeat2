@@ -90,6 +90,11 @@ export function TrackRow({
               {track.artist}
               <span className="mx-1.5 text-ink/20">·</span>
               <span className="tabular-nums">{formatDuration(track.duration)}</span>
+              {track.kind === "video" ? (
+                <span className="ml-1.5 rounded-full bg-ink/[0.07] px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wider text-ink-muted">
+                  YouTube
+                </span>
+              ) : null}
             </p>
           </div>
         </button>

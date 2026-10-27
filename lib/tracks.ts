@@ -5,7 +5,11 @@
  * and the client (player engine, UI). Keep it dependency-free.
  */
 
-export const TRACK_PROVIDERS = ["audius", "archive"] as const;
+/**
+ * Ordered by product priority: YouTube first. `interleave()` preserves this
+ * order, so YouTube results lead the search list when a key is configured.
+ */
+export const TRACK_PROVIDERS = ["youtube", "audius", "archive"] as const;
 
 export type TrackProvider = (typeof TRACK_PROVIDERS)[number];
 
@@ -40,6 +44,7 @@ export interface TrackPlayInput {
 }
 
 export const PROVIDER_LABELS: Record<TrackProvider, string> = {
+  youtube: "YouTube",
   audius: "Audius",
   archive: "Archive.org",
 };

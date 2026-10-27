@@ -159,9 +159,8 @@ export function SearchPageView({
           </button>
 
           <p className="px-1 text-[11.5px] leading-relaxed text-ink-muted">
-            IronBeat searches Audius and the Internet Archive at the same time,
-            then blends the results into one queue. Both return complete tracks,
-            so everything keeps playing with the screen off.
+            IronBeat searches YouTube first, then Audius and the Internet Archive
+            at the same time, and blends the results into one queue.
           </p>
         </div>
       ) : null}

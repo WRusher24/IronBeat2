@@ -63,14 +63,16 @@ You will notice:
 The search bar sits at the top of the home screen — thumb height, no scrolling required.
 
 1. Tap the bar and type. Two characters is enough to start.
-2. Results appear in about a second, pulled from Audius and the Internet Archive at the same time.
+2. Results appear in about a second. YouTube is searched first, then Audius and the Internet Archive, all at once.
 3. Tap any result.
 
 **What happens when you tap:** the track starts immediately **and the rest of the result list becomes your queue**. When the track ends, the next one plays on its own. You never have to touch the phone between sets.
 
-Under the result count you can see which catalogues answered — for example `Audius · Archive.org`. If one is missing, the other still works.
+Under the result count you can see which catalogues answered — for example `YouTube · Audius · Archive.org`. If one is missing, the others still work.
 
-**Every result is a complete track.** IronBeat only uses sources that hand over the whole song, so nothing stops at thirty seconds and nothing cuts out when you lock the phone.
+**Every result is a complete track.** No thirty-second clips — preview-only catalogues were removed.
+
+**One difference to know about.** Rows marked **YouTube** play full-length in YouTube's official player, but iOS pauses that player when you lock the phone or switch apps. Tracks from Audius and the Internet Archive keep playing with the screen off. If a lock-screen session matters more than the specific track, pick a row without the YouTube tag.
 
 **Useful queries**
 
@@ -194,7 +196,7 @@ Tap **♡** again to remove it. Saving is instant and works offline for anything
 
 ## 10. Lock screen & AirPods controls
 
-IronBeat declares itself as a media player to iOS, so the audio keeps running when you lock the phone, switch apps, or pocket the device.
+IronBeat declares itself as a media player to iOS, so audio from Audius and the Internet Archive keeps running when you lock the phone, switch apps, or pocket the device.
 
 - **Lock screen** — artwork, title, artist, scrubber, play/pause, skip.
 - **AirPods** — double-tap plays/pauses; double-tap-and-hold skips (per your iOS settings).
@@ -202,6 +204,8 @@ IronBeat declares itself as a media player to iOS, so the audio keeps running wh
 - **CarPlay / Bluetooth** — standard transport commands are forwarded to the app.
 
 Under the hood this uses three web standards together: the **Audio Session API** (`navigator.audioSession.type = "playback"`, which tells iOS this is long-form media rather than a sound effect), the **Media Session API** (metadata and transport handlers), and a DOM-attached `<audio>` element with `playsinline` so the stream isn't suspended.
+
+**YouTube tracks are the exception.** Their audio comes from a player embedded from youtube.com, which iOS suspends when the app is backgrounded. Lock-screen playback is reliable for Audius and Internet Archive tracks; YouTube rows are marked so you can tell them apart.
 
 No setup needed. If the controls don't appear, make sure the app was installed from Safari and that a track is actually playing.
 
@@ -238,6 +242,6 @@ When you lose signal:
 
 **Build one folder per session type**, not per genre. "Push day" is easier to find mid-set than "phonk 2024".
 
-**Lock the phone and keep lifting.** Every track plays in the background — the app tells iOS it is a media player, so the screen going dark doesn't stop the music.
+**Lock the phone and keep lifting.** Audius and Archive tracks keep playing with the screen off — the app tells iOS it is a media player, so the screen going dark doesn't stop the music. YouTube rows pause on lock; build a folder from the other two sources for hands-free sessions.
 
 **Re-run Smart Shuffle when a session feels flat.** It re-reads your history each time, so it drifts as your taste does.

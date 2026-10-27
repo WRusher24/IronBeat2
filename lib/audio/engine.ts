@@ -5,27 +5,30 @@ import {
   onAudioSessionStateChange,
   releasePlaybackSession,
 } from "./audio-session";
+import { YouTubeAdapter, YT_STATE } from "./youtube";
 
 /**
  * IronBeat audio engine.
  *
- * A framework-agnostic state machine wrapping a single HTMLAudioElement.
+ * A framework-agnostic state machine that owns two playback backends:
  *
- * Every source IronBeat ships returns a complete, directly playable file, so
- * there is exactly one playback backend. That is deliberate: an iframe-backed
- * player (YouTube) gets suspended the moment iOS backgrounds the app, which
- * silently kills lock-screen playback for those tracks. One backend means one
- * behaviour — audio keeps running with the screen off, on the lock screen, and
- * through AirPods.
+ *   • HTMLAudioElement  — direct streams (Audius, Archive.org)
+ *   • YouTube IFrame    — official player for YouTube search results
  *
- * The element is attached to the document rather than kept as a detached
- * `new Audio()`. iOS treats detached media elements as disposable and may stop
- * them when the page is backgrounded; a hidden, attached element is stable.
+ * YouTube is the priority catalogue, and its only sanctioned playback route is
+ * the IFrame Player. That player is owned by a cross-origin document, so iOS
+ * may suspend it when the app is backgrounded — the Audio Session and Media
+ * Session declarations below keep the page's own media session alive, but they
+ * cannot override the iframe's lifecycle. HTML5-backed tracks (Audius,
+ * Archive.org) keep playing through a lock in every case.
  *
- * React never touches the element directly; it subscribes through
- * `useSyncExternalStore`. That keeps transport logic testable, avoids
- * re-render storms during playback, and puts Media Session / lock-screen
- * controls in exactly one place.
+ * The `<audio>` element is attached to the document rather than kept detached:
+ * iOS treats detached media elements as disposable and may stop them when the
+ * page is backgrounded.
+ *
+ * React never touches the backends directly; it subscribes through
+ * `useSyncExternalStore`, so transport logic stays testable and Media Session /
+ * lock-screen controls live in exactly one place.
  */
 
 export type RepeatMode = "off" | "one" | "all";
@@ -124,18 +127,26 @@ export class AudioEngine {
   private trackStartListeners = new Set<TrackStartListener>();
 
   private audio: HTMLAudioElement | null = null;
+  private yt = new YouTubeAdapter();
 
   /** Playback order over `queue` indices. Identity order unless shuffled. */
   private order: number[] = [];
   private loadToken = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private ytTicker: ReturnType<typeof setInterval> | null = null;
   private lastTimeEmit = 0;
   private pendingResumeTime = 0;
+  private loadedVideoId: string | null = null;
   private unlocked = false;
   private consecutiveFailures = 0;
   private skipTimer: ReturnType<typeof setTimeout> | null = null;
   private mediaSessionReady = false;
   private detachAudioSession: (() => void) | null = null;
+
+  constructor() {
+    this.yt.onStateChange = (state) => this.handleYouTubeState(state);
+    this.yt.onError = () => this.handlePlaybackFailure("This video can't be played here.");
+  }
 
   // -------------------------------------------------------------------------
   // Subscription
@@ -174,16 +185,16 @@ export class AudioEngine {
     audio.id = "ironbeat-audio";
     audio.preload = "metadata";
     audio.volume = this.state.volume;
-    // Lets iOS keep the session alive when the app is backgrounded and hands
+    // Keeps the iOS audio session alive when the app is backgrounded and hands
     // control to the lock screen / AirPods.
     audio.setAttribute("playsinline", "true");
     audio.setAttribute("webkit-playsinline", "true");
     audio.setAttribute("x-webkit-airplay", "allow");
     audio.setAttribute("aria-hidden", "true");
     audio.tabIndex = -1;
-    // Off-screen rather than display:none — some mobile browsers suspend
-    // media inside a display:none subtree. Attached to the document because
-    // detached Audio objects get reclaimed when the page is backgrounded.
+    // Off-screen rather than display:none — some mobile browsers suspend media
+    // inside a display:none subtree. Attached to the document because detached
+    // Audio objects get reclaimed when the page is backgrounded.
     audio.style.cssText =
       "position:fixed;left:-9999px;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;";
 
@@ -512,6 +523,8 @@ export class AudioEngine {
       delete this.audio.dataset.trackId;
       this.audio.load();
     }
+    this.yt.pause();
+    this.stopYouTubeTicker();
     releasePlaybackSession();
     this.order = [];
     this.patch({
@@ -595,6 +608,28 @@ export class AudioEngine {
 
     this.patch({ error: null, isLoading: true });
 
+    if (track.kind === "video") {
+      try {
+        // Only (re)load when the video actually changed — otherwise resuming
+        // from pause would restart the track from zero.
+        if (this.loadedVideoId !== track.providerId) {
+          await this.yt.load(track.providerId);
+          this.loadedVideoId = track.providerId;
+        }
+        await this.yt.play();
+        this.startYouTubeTicker();
+        this.patch({ isPlaying: true, needsGesture: false });
+        this.updatePlaybackState("playing");
+      } catch {
+        this.patch({
+          isPlaying: false,
+          isLoading: false,
+          needsGesture: true,
+        });
+      }
+      return;
+    }
+
     const audio = this.ensureAudio();
 
     if (audio.dataset.trackId !== track.id) {
@@ -625,7 +660,12 @@ export class AudioEngine {
   };
 
   pause = (): void => {
-    this.audio?.pause();
+    if (this.state.current?.kind === "video") {
+      this.yt.pause();
+      this.stopYouTubeTicker();
+    } else {
+      this.audio?.pause();
+    }
     this.patch({ isPlaying: false });
     this.updatePlaybackState("paused");
   };
@@ -639,7 +679,9 @@ export class AudioEngine {
     const duration = this.state.duration || this.state.current?.duration || 0;
     const target = Math.max(0, duration > 0 ? Math.min(seconds, duration) : seconds);
 
-    if (this.audio) {
+    if (this.state.current?.kind === "video") {
+      this.yt.seek(target);
+    } else if (this.audio) {
       this.audio.currentTime = target;
     }
 
@@ -655,12 +697,14 @@ export class AudioEngine {
     const volume = Math.min(Math.max(value, 0), 1);
     this.patch({ volume, muted: volume === 0 ? this.state.muted : false });
     if (this.audio) this.audio.volume = volume;
+    this.yt.setVolume(volume);
   };
 
   toggleMute = (): void => {
     const muted = !this.state.muted;
     this.patch({ muted });
     if (this.audio) this.audio.muted = muted;
+    this.yt.setMuted(muted);
   };
 
   cycleRepeat = (): void => {
@@ -723,6 +767,36 @@ export class AudioEngine {
 
     this.updateMediaSession(track);
     markPlaybackSession();
+
+    if (track.kind === "video") {
+      this.audio?.pause();
+      this.stopYouTubeTicker();
+
+      if (!autoPlay) {
+        this.patch({ isPlaying: false, isLoading: false });
+        return;
+      }
+
+      try {
+        await this.yt.load(track.providerId);
+        this.loadedVideoId = track.providerId;
+        if (token !== this.loadToken) return;
+        await this.yt.play();
+        if (token !== this.loadToken) return;
+        this.startYouTubeTicker();
+        this.patch({ isPlaying: true, isLoading: false });
+        this.updatePlaybackState("playing");
+        this.notifyTrackStart(track);
+      } catch {
+        if (token !== this.loadToken) return;
+        this.patch({ isPlaying: false, isLoading: false, needsGesture: true });
+      }
+      return;
+    }
+
+    // Audio backend.
+    this.yt.pause();
+    this.stopYouTubeTicker();
 
     const audio = this.ensureAudio();
     audio.pause();
@@ -791,6 +865,52 @@ export class AudioEngine {
         this.skipTimer = null;
         this.next(true);
       }, 1400);
+    }
+  }
+
+  private handleYouTubeState(state: number): void {
+    if (state === YT_STATE.PLAYING) {
+      this.consecutiveFailures = 0;
+      const duration = this.yt.getDuration();
+      this.patch({
+        isPlaying: true,
+        isLoading: false,
+        needsGesture: false,
+        error: null,
+        duration: duration > 0 ? duration : this.state.duration,
+      });
+      this.updatePlaybackState("playing");
+    } else if (state === YT_STATE.PAUSED) {
+      this.patch({ isPlaying: false });
+      this.updatePlaybackState("paused");
+    } else if (state === YT_STATE.BUFFERING) {
+      this.patch({ isLoading: true });
+    } else if (state === YT_STATE.ENDED) {
+      this.stopYouTubeTicker();
+      this.handleEnded();
+    }
+  }
+
+  private startYouTubeTicker(): void {
+    this.stopYouTubeTicker();
+    if (typeof window === "undefined") return;
+
+    this.ytTicker = setInterval(() => {
+      if (!this.state.isPlaying) return;
+      const time = this.yt.getCurrentTime();
+      const duration = this.yt.getDuration();
+      this.patch({
+        currentTime: time,
+        duration: duration > 0 ? duration : this.state.duration,
+      });
+      this.syncPositionState();
+    }, 500);
+  }
+
+  private stopYouTubeTicker(): void {
+    if (this.ytTicker) {
+      clearInterval(this.ytTicker);
+      this.ytTicker = null;
     }
   }
 
